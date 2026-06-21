@@ -56,9 +56,10 @@ st.markdown(
 
     .hero-title {
         font-family: 'Space Grotesk', sans-serif; font-weight: 700;
-        font-size: 2.6rem; line-height: 1.1; margin-bottom: 0;
+        font-size: 2.6rem; line-height: 1.3; padding-top: 0.2rem; margin-bottom: 0;
         background: linear-gradient(90deg, #FF6B6B, #FFD166 40%, #4ECDC4 80%);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        display: inline-block;
     }
     .hero-sub { color: #9aa0ad; font-size: 1.0rem; margin-top: 4px; margin-bottom: 1.4rem;}
 
