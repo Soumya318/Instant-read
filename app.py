@@ -18,6 +18,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from supabase import create_client
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.ensemble import IsolationForest, RandomForestClassifier, RandomForestRegressor
@@ -94,7 +95,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-TOOLS_USED = ["Streamlit", "pandas", "NumPy", "DuckDB (SQL)", "scikit-learn (ML)", "Plotly"]
+TOOLS_USED = ["Streamlit", "pandas", "NumPy", "DuckDB (SQL)", "scikit-learn (ML)", "Plotly", "Supabase (cloud save)"]
 st.markdown(
     "".join(f'<span class="badge badge-teal">{t}</span>' for t in TOOLS_USED),
     unsafe_allow_html=True,
@@ -102,11 +103,64 @@ st.markdown(
 st.write("")
 
 # ============================================================================
-# Upload
+# Supabase (cloud save/load) — optional, app still works fully without it
 # ============================================================================
-uploaded = st.file_uploader("Drop a CSV or Excel file", type=["csv", "xlsx", "xls"])
+@st.cache_resource(show_spinner=False)
+def get_supabase_client():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
-if not uploaded:
+
+try:
+    supabase = get_supabase_client()
+    SUPABASE_READY = True
+except Exception:
+    supabase = None
+    SUPABASE_READY = False
+
+# ============================================================================
+# Data source: new upload OR a previously saved project
+# ============================================================================
+if "active_bytes" not in st.session_state:
+    st.session_state.active_bytes = None
+    st.session_state.active_name = None
+
+mode = st.radio("Data source", ["📤 Upload new file", "📂 Load a saved project"], horizontal=True)
+
+if mode == "📤 Upload new file":
+    new_upload = st.file_uploader("Drop a CSV or Excel file", type=["csv", "xlsx", "xls"])
+    if new_upload:
+        st.session_state.active_bytes = new_upload.getvalue()
+        st.session_state.active_name = new_upload.name
+else:
+    if not SUPABASE_READY:
+        st.warning("Cloud save/load isn't configured yet — add Supabase secrets to enable this (see README).")
+    else:
+        try:
+            records = supabase.table("analyses").select("*").order("created_at", desc=True).execute().data
+        except Exception as e:
+            records = []
+            st.error(f"Couldn't reach saved projects: {e}")
+
+        if records:
+            names = [r["name"] for r in records]
+            choice = st.selectbox("Pick a saved project", names)
+            chosen = next(r for r in records if r["name"] == choice)
+            c1, c2 = st.columns([1, 3])
+            with c1:
+                if st.button("Load this project"):
+                    file_bytes = supabase.storage.from_("datasets").download(chosen["file_path"])
+                    st.session_state.active_bytes = file_bytes
+                    st.session_state.active_name = chosen["file_path"]
+                    st.toast(f"Loaded '{chosen['name']}'", icon="📂")
+            with c2:
+                st.caption(f"{chosen['n_rows']} rows · {chosen['n_cols']} columns · "
+                           f"health {chosen['health_score']}/100 · saved {chosen['created_at'][:10]}")
+        else:
+            st.info("No saved projects yet — analyze something, then save it from the Export tab.")
+
+if st.session_state.active_bytes is None:
     st.info("Waiting for a file. Try any CSV/XLSX you have — sales data, survey exports, logs, etc.")
     st.stop()
 
@@ -127,7 +181,7 @@ for i, step in enumerate(scan_steps):
     time.sleep(0.12)
 scan_box.empty()
 
-df = load_data(uploaded.getvalue(), uploaded.name)
+df = load_data(st.session_state.active_bytes, st.session_state.active_name)
 st.toast("Dataset analyzed!", icon="✅")
 
 numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
@@ -539,6 +593,29 @@ with tab_ml:
 
 # ---------------- Export / Power BI ----------------
 with tab_export:
+    st.subheader("💾 Save this project to the cloud")
+    if SUPABASE_READY:
+        default_name = st.session_state.active_name.rsplit(".", 1)[0]
+        project_name = st.text_input("Project name", value=default_name)
+        if st.button("Save to cloud", type="primary"):
+            try:
+                file_path = f"{int(time.time())}_{st.session_state.active_name}"
+                supabase.storage.from_("datasets").upload(file_path, st.session_state.active_bytes)
+                supabase.table("analyses").insert({
+                    "name": project_name,
+                    "file_path": file_path,
+                    "n_rows": int(n_rows),
+                    "n_cols": int(n_cols),
+                    "health_score": int(health_score),
+                    "data_story": data_story.replace("**", ""),
+                }).execute()
+                st.success(f"Saved as '{project_name}'! Switch to 'Load a saved project' above to reopen it anytime.")
+            except Exception as e:
+                st.error(f"Couldn't save: {e}")
+    else:
+        st.info("Cloud save isn't configured yet — add Supabase secrets (SUPABASE_URL, SUPABASE_KEY) to enable this.")
+
+    st.divider()
     st.subheader("Export")
     st.download_button(
         "Download dataset as CSV",
