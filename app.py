@@ -600,7 +600,12 @@ with tab_export:
         if st.button("Save to cloud", type="primary"):
             try:
                 file_path = f"{int(time.time())}_{st.session_state.active_name}"
-                supabase.storage.from_("datasets").upload(file_path, st.session_state.active_bytes)
+                # supabase-py v2 storage upload
+                supabase.storage.from_("datasets").upload(
+                    path=file_path,
+                    file=st.session_state.active_bytes,
+                    file_options={"content-type": "application/octet-stream", "upsert": "true"}
+                )
                 supabase.table("analyses").insert({
                     "name": project_name,
                     "file_path": file_path,
@@ -609,7 +614,7 @@ with tab_export:
                     "health_score": int(health_score),
                     "data_story": data_story.replace("**", ""),
                 }).execute()
-                st.success(f"Saved as '{project_name}'! Switch to 'Load a saved project' above to reopen it anytime.")
+                st.success(f"✅ Saved as '{project_name}'! Switch to 'Load a saved project' above to reopen it anytime.")
             except Exception as e:
                 st.error(f"Couldn't save: {e}")
     else:
